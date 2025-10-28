@@ -424,7 +424,7 @@ NONCE=$(expr $NONCE + "1")
 if [ "$DRY_RUN" = "true" ]; then
     PAYMENTS_CONTRACT_ADDRESS="0x3456789012345678901234567890123456789012"  # Dummy address for dry-run
 else
-    PAYMENTS_CONTRACT_ADDRESS=$(forge_create lib/fws-payments/src/Payments.sol:Payments --nonce $NONCE | grep "Deployed to" | awk '{print $3}')
+    PAYMENTS_CONTRACT_ADDRESS=$(forge_create lib/fws-payments/src/FilecoinPayV1.sol:Payments --nonce $NONCE | grep "Deployed to" | awk '{print $3}')
     if [ -z "$PAYMENTS_CONTRACT_ADDRESS" ]; then
         echo "Error: Failed to extract Payments contract address"
         exit 1
