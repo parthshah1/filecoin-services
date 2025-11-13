@@ -3,7 +3,7 @@
 # Auto-detects network based on RPC chain ID and sets appropriate configuration
 #
 # Supported Networks:
-#   - Chain ID 31415926: Filecoin devnet (15s blocktime, fast testing)
+#   - Chain ID 31415926: Filecoin devnet (5s blocktime, fast testing)
 #   - Chain ID 314159:   Filecoin Calibration testnet
 #   - Chain ID 314:      Filecoin mainnet
 #
@@ -60,10 +60,11 @@ case "$CHAIN" in
     # Network-specific addresses for devnet (using calibnet addresses as fallback)
     USDFC_TOKEN_ADDRESS="${USDFC_TOKEN_ADDRESS}"
     # Default challenge and proving configuration for devnet (fast testing values)
-    # Devnet has ~15 second blocktimes, so epochs are much faster than mainnet
+    # Devnet has ~5 second blocktimes, so epochs are much faster than mainnet
+    # Optimized for extensive simulation testing with shorter windows
     DEFAULT_CHALLENGE_FINALITY="20"          # Reasonable security for testing (higher than calibnet)
-    DEFAULT_MAX_PROVING_PERIOD="480"         # 480 epochs ≈ 2 hours at 15s/epoch for faster testing
-    DEFAULT_CHALLENGE_WINDOW_SIZE="48"       # 48 epochs ≈ 12 minutes (10% of proving period)
+    DEFAULT_MAX_PROVING_PERIOD="1440"        # 1440 epochs ≈ 2 hours at 5s/epoch (matches calibnet's 2h period)
+    DEFAULT_CHALLENGE_WINDOW_SIZE="60"       # 60 epochs ≈ 5 minutes at 5s/epoch (reduced for faster testing)
     ;;
   "314159")
     NETWORK_NAME="calibnet"
@@ -86,7 +87,7 @@ case "$CHAIN" in
   *)
     echo "Error: Unsupported network"
     echo "  Supported networks:"
-    echo "    31415926 - Filecoin devnet (15s blocktime)"
+    echo "    31415926 - Filecoin devnet (5s blocktime)"
     echo "    314159   - Filecoin Calibration testnet"
     echo "    314      - Filecoin mainnet"
     :  # Remove debug message for clean output
