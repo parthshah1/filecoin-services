@@ -1,8 +1,16 @@
 #! /bin/bash
 # deploy-all-warm-storage deploys the PDP verifier, FilecoinPayV1 contract, and Warm Storage service
 # Auto-detects network based on RPC chain ID and sets appropriate configuration
-# Assumption: KEYSTORE, PASSWORD, ETH_RPC_URL env vars are set to an appropriate eth keystore path and password
-# and to a valid ETH_RPC_URL for the target network.
+#
+# Supported Networks:
+#   - Chain ID 31415926: Filecoin devnet (5s blocktime, fast testing)
+#   - Chain ID 314159:   Filecoin Calibration testnet
+#   - Chain ID 314:      Filecoin mainnet
+#
+# Authentication: Support both keystore and private key authentication:
+#   - Keystore: Set ETH_KEYSTORE, PASSWORD, ETH_RPC_URL env vars
+#   - Private Key: Set PRIVATE_KEY, ETH_RPC_URL env vars (more convenient for CI/CD)
+#
 # Assumption: forge, cast, jq are in the PATH
 # Assumption: called from contracts directory so forge paths work out
 #
@@ -14,17 +22,15 @@ DRY_RUN=${DRY_RUN:-true}
 DEFAULT_FILBEAM_BENEFICIARY_ADDRESS="0x1D60d2F5960Af6341e842C539985FA297E10d6eA"
 DEFAULT_FILBEAM_CONTROLLER_ADDRESS="0x5f7E5E2A756430EdeE781FF6e6F7954254Ef629A"
 
-if [ "$DRY_RUN" = "true" ]; then
-    echo "🧪 Running in DRY-RUN mode - simulation only, no actual deployment"
+if [ "${DRY_RUN:-false}" = "true" ]; then
+    echo "🧪 Running in DRY-RUN mode - no transactions will be sent to the network"
 else
-    echo "🚀 Running in DEPLOYMENT mode - will actually deploy and upgrade contracts"
+    :  # Remove deployment mode message for clean output
 fi
 
 # Get this script's directory so we can reliably source other scripts
 # in the same directory, regardless of where this script is executed from
 SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
-
-echo "Deploying all Warm Storage contracts"
 
 if [ -z "$ETH_RPC_URL" ]; then
   echo "Error: ETH_RPC_URL is not set"
@@ -33,7 +39,12 @@ fi
 
 # Auto-detect chain ID from RPC
 if [ -z "$CHAIN" ]; then
-  export CHAIN=$(cast chain-id)
+  # Choose authentication method for chain detection
+  if [ -n "$PRIVATE_KEY" ]; then
+    export CHAIN=$(cast chain-id --rpc-url "$ETH_RPC_URL" 2>/dev/null)
+  else
+    export CHAIN=$(cast chain-id 2>/dev/null)
+  fi
   if [ -z "$CHAIN" ]; then
     echo "Error: Failed to detect chain ID from RPC"
     exit 1
@@ -42,8 +53,19 @@ fi
 
 # Set network-specific configuration based on chain ID
 # NOTE: CHALLENGE_FINALITY should always be 150 in production for security.
-# Calibnet uses lower values for faster testing and development.
+# Calibnet and devnet use lower values for faster testing and development.
 case "$CHAIN" in
+  "31415926")
+    NETWORK_NAME="devnet"
+    # Network-specific addresses for devnet (using calibnet addresses as fallback)
+    USDFC_TOKEN_ADDRESS="${USDFC_TOKEN_ADDRESS}"
+    # Default challenge and proving configuration for devnet (fast testing values)
+    # Devnet has ~5 second blocktimes, so epochs are much faster than mainnet
+    # Optimized for extensive simulation testing with shorter windows
+    DEFAULT_CHALLENGE_FINALITY="20"          # Reasonable security for testing (higher than calibnet)
+    DEFAULT_MAX_PROVING_PERIOD="1440"        # 1440 epochs ≈ 2 hours at 5s/epoch (matches calibnet's 2h period)
+    DEFAULT_CHALLENGE_WINDOW_SIZE="60"       # 60 epochs ≈ 5 minutes at 5s/epoch (reduced for faster testing)
+    ;;
   "314159")
     NETWORK_NAME="calibnet"
     # Network-specific addresses for calibnet
@@ -65,18 +87,37 @@ case "$CHAIN" in
   *)
     echo "Error: Unsupported network"
     echo "  Supported networks:"
-    echo "    314159 - Filecoin Calibration testnet"
-    echo "    314    - Filecoin mainnet"
-    echo "  Detected chain ID: $CHAIN"
+    echo "    31415926 - Filecoin devnet (5s blocktime)"
+    echo "    314159   - Filecoin Calibration testnet"
+    echo "    314      - Filecoin mainnet"
+    :  # Remove debug message for clean output
     exit 1
     ;;
 esac
 
-echo "Detected Chain ID: $CHAIN ($NETWORK_NAME)"
+# Chain detected and network configuration set
 
-if [ "$DRY_RUN" != "true" ] && [ -z "$ETH_KEYSTORE" ]; then
-  echo "Error: ETH_KEYSTORE is not set (required for actual deployment)"
-  exit 1
+# Authentication validation - support both keystore and private key methods
+if [ "$DRY_RUN" != "true" ]; then
+  if [ -n "$PRIVATE_KEY" ]; then
+    :  # Remove authentication message for clean output
+    # Validate private key format
+    if [[ ! "$PRIVATE_KEY" =~ ^0x[0-9a-fA-F]{64}$ ]]; then
+      echo "Error: PRIVATE_KEY must be a 64-character hex string starting with 0x"
+      exit 1
+    fi
+  elif [ -n "$ETH_KEYSTORE" ]; then
+    :  # Remove authentication message for clean output
+    if [ ! -f "$ETH_KEYSTORE" ]; then
+      echo "Error: ETH_KEYSTORE file not found: $ETH_KEYSTORE"
+      exit 1
+    fi
+  else
+    echo "Error: Either PRIVATE_KEY or ETH_KEYSTORE must be set for actual deployment"
+    echo "  For private key: set PRIVATE_KEY environment variable"
+    echo "  For keystore: set ETH_KEYSTORE and PASSWORD environment variables"
+    exit 1
+  fi
 fi
 
 # Service name and description - mandatory environment variables
@@ -103,10 +144,6 @@ if [ $DESC_LENGTH -eq 0 ] || [ $DESC_LENGTH -gt 256 ]; then
   echo "Error: SERVICE_DESCRIPTION must be between 1 and 256 characters (current: $DESC_LENGTH)"
   exit 1
 fi
-
-echo "Service configuration:"
-echo "  Name: $SERVICE_NAME"
-echo "  Description: $SERVICE_DESCRIPTION"
 
 # Use environment variables if set, otherwise use network defaults
 if [ -z "$FILBEAM_CONTROLLER_ADDRESS" ]; then
@@ -282,32 +319,65 @@ if [ "$MAX_PROVING_PERIOD" -lt "$MIN_REQUIRED" ]; then
     exit 1
 fi
 
-echo "Network: $NETWORK_NAME"
-echo "Configuration validation passed:"
-echo "  CHALLENGE_FINALITY=$CHALLENGE_FINALITY"
-echo "  MAX_PROVING_PERIOD=$MAX_PROVING_PERIOD"
-echo "  CHALLENGE_WINDOW_SIZE=$CHALLENGE_WINDOW_SIZE"
+# Suppress forge warnings by redirecting stderr
+export FOUNDRY_PROFILE=default
+
+# Helper function to wait for transaction confirmation (silent)
+wait_for_tx() {
+    local tx_hash="$1"
+    local max_wait=120
+    local waited=0
+    
+    if [ -z "$tx_hash" ] || [ "$tx_hash" = "0x" ]; then
+        return 0
+    fi
+    
+    while [ $waited -lt $max_wait ]; do
+        if [ -n "$PRIVATE_KEY" ]; then
+            receipt=$(cast receipt "$tx_hash" --rpc-url "$ETH_RPC_URL" 2>/dev/null)
+        else
+            receipt=$(cast receipt "$tx_hash" 2>/dev/null)
+        fi
+        
+        if [ -n "$receipt" ]; then
+            sleep 30
+            return 0
+        fi
+        
+        sleep 2
+        waited=$((waited + 2))
+    done
+    
+    echo "Error: Transaction $tx_hash did not confirm within ${max_wait}s" >&2
+    return 1
+}
+
+# Helper function to run forge create with appropriate authentication
+forge_create() {
+    local contract_path="$1"
+    shift
+    local extra_args="$@"
+    
+    if [ "$DRY_RUN" = "true" ]; then
+        return 0
+    fi
+    
+    if [ -n "$PRIVATE_KEY" ]; then
+        eval "forge create --private-key \"$PRIVATE_KEY\" --rpc-url \"$ETH_RPC_URL\" --broadcast $extra_args \"$contract_path\" 2>&1"
+    else
+        eval "forge create --password \"$PASSWORD\" --broadcast $extra_args \"$contract_path\" 2>&1"
+    fi
+}
 
 # Test compilation of key contracts in dry-run mode
 if [ "$DRY_RUN" = "true" ]; then
-    echo "🔍 Testing compilation of core contracts..."
-    
-    # Test compilation without network interaction
-    echo "  - Testing FilecoinWarmStorageService compilation..."
-    forge build --contracts src/FilecoinWarmStorageService.sol > /dev/null 2>&1
+    echo "Testing contract compilation..."
+    forge build > /dev/null 2>&1
     if [ $? -ne 0 ]; then
-        echo "❌ FilecoinWarmStorageService compilation failed"
+        echo "❌ Contract compilation failed"
         exit 1
     fi
-    
-    echo "  - Testing ServiceProviderRegistry compilation..."
-    forge build --contracts src/ServiceProviderRegistry.sol > /dev/null 2>&1
-    if [ $? -ne 0 ]; then
-        echo "❌ ServiceProviderRegistry compilation failed"
-        exit 1
-    fi
-    
-    echo "✅ Core contract compilation tests passed"
+    echo "✅ Contract compilation successful"
 fi
 
 # ========================================
@@ -321,167 +391,344 @@ if [ "$DRY_RUN" = "true" ]; then
     echo "Deploying contracts from address $ADDR (dry-run)"
     echo "🧪 Will simulate all deployments without broadcasting transactions"
 else
-    if [ -z "$ETH_KEYSTORE" ]; then
-        echo "Error: ETH_KEYSTORE is not set (required for actual deployment)"
-        exit 1
+    # Get deployer address based on authentication method
+    if [ -n "$PRIVATE_KEY" ]; then
+        ADDR=$(cast wallet address --private-key "$PRIVATE_KEY" 2>/dev/null)
+        NONCE="$(cast nonce "$ADDR" --rpc-url "$ETH_RPC_URL" 2>/dev/null)"
+    else
+        ADDR=$(cast wallet address --password "$PASSWORD" 2>/dev/null)
+        NONCE="$(cast nonce "$ADDR" 2>/dev/null)"
     fi
-
-    ADDR=$(cast wallet address  --password "$PASSWORD")
-    NONCE="$(cast nonce "$ADDR")"
+    
     BROADCAST_FLAG="--broadcast"
-    echo "Deploying contracts from address $ADDR"
-    echo "🚀 Will deploy and broadcast all transactions"
+    
+    if [ -z "$SESSION_KEY_REGISTRY_ADDRESS" ]; then
+        if [ -n "$PRIVATE_KEY" ]; then
+            DEPLOY_OUTPUT=$(forge create --private-key "$PRIVATE_KEY" --rpc-url "$ETH_RPC_URL" --broadcast --nonce $NONCE lib/session-key-registry/src/SessionKeyRegistry.sol:SessionKeyRegistry 2>&1)
+        else
+            DEPLOY_OUTPUT=$(forge create --password "$PASSWORD" --broadcast --nonce $NONCE lib/session-key-registry/src/SessionKeyRegistry.sol:SessionKeyRegistry 2>&1)
+        fi
+        
+        SESSION_KEY_REGISTRY_ADDRESS=$(echo "$DEPLOY_OUTPUT" | grep "Deployed to" | awk '{print $3}')
+        TX_HASH=$(echo "$DEPLOY_OUTPUT" | grep -i "Transaction hash" | awk '{print $NF}')
+        
+        if [ -z "$SESSION_KEY_REGISTRY_ADDRESS" ]; then
+            echo "Error: Failed to extract SessionKeyRegistry address" >&2
+            echo "Deploy output was:" >&2
+            echo "$DEPLOY_OUTPUT" >&2
+            exit 1
+        fi
+        echo "SessionKeyRegistry: $SESSION_KEY_REGISTRY_ADDRESS"
+        
+        if [ -n "$TX_HASH" ]; then
+            wait_for_tx "$TX_HASH"
+        else
+            sleep 30
+        fi
+        NONCE=$(expr $NONCE + "1")
+    fi
 fi
 
-echo
-echo "========================================"
-echo "DEPLOYING..."
-echo "========================================"
-echo
-
-# Step 0: Deploy or use existing SessionKeyRegistry
-deploy_session_key_registry_if_needed
-
-# Step 1: Deploy or use existing PDPVerifier implementation
-deploy_implementation_if_needed \
-    "VERIFIER_IMPLEMENTATION_ADDRESS" \
-    "lib/pdp/src/PDPVerifier.sol:PDPVerifier" \
-    "PDPVerifier implementation"
-
-# Step 2: Deploy or use existing PDPVerifier proxy
-INIT_DATA=$(cast calldata "initialize(uint256)" $CHALLENGE_FINALITY)
-deploy_proxy_if_needed \
-    "PDP_VERIFIER_ADDRESS" \
-    "$VERIFIER_IMPLEMENTATION_ADDRESS" \
-    "$INIT_DATA" \
-    "PDPVerifier proxy"
-
-# Step 3: Deploy or use existing FilecoinPayV1 contract
-deploy_implementation_if_needed \
-    "PAYMENTS_CONTRACT_ADDRESS" \
-    "lib/fws-payments/src/FilecoinPayV1.sol:FilecoinPayV1" \
-    "FilecoinPayV1"
-
-# Step 4: Deploy or use existing ServiceProviderRegistry implementation
-deploy_implementation_if_needed \
-    "REGISTRY_IMPLEMENTATION_ADDRESS" \
-    "src/ServiceProviderRegistry.sol:ServiceProviderRegistry" \
-    "ServiceProviderRegistry implementation"
-
-# Step 5: Deploy or use existing ServiceProviderRegistry proxy
-REGISTRY_INIT_DATA=$(cast calldata "initialize()")
-deploy_proxy_if_needed \
-    "SERVICE_PROVIDER_REGISTRY_PROXY_ADDRESS" \
-    "$REGISTRY_IMPLEMENTATION_ADDRESS" \
-    "$REGISTRY_INIT_DATA" \
-    "ServiceProviderRegistry proxy"
-
-# Step 6: Deploy or use existing SignatureVerificationLib
-deploy_implementation_if_needed \
-    "SIGNATURE_VERIFICATION_LIB_ADDRESS" \
-    "src/lib/SignatureVerificationLib.sol:SignatureVerificationLib" \
-    "SignatureVerificationLib"
-
-# Step 7: Deploy or use existing FilecoinWarmStorageService implementation
-# Set LIBRARIES variable for the deployment helper (format: path:name:address)
-LIBRARIES="src/lib/SignatureVerificationLib.sol:SignatureVerificationLib:$SIGNATURE_VERIFICATION_LIB_ADDRESS"
-deploy_implementation_if_needed \
-    "FWS_IMPLEMENTATION_ADDRESS" \
-    "src/FilecoinWarmStorageService.sol:FilecoinWarmStorageService" \
-    "FilecoinWarmStorageService implementation" \
-    "$PDP_VERIFIER_ADDRESS" \
-    "$PAYMENTS_CONTRACT_ADDRESS" \
-    "$USDFC_TOKEN_ADDRESS" \
-    "$FILBEAM_BENEFICIARY_ADDRESS" \
-    "$SERVICE_PROVIDER_REGISTRY_PROXY_ADDRESS" \
-    "$SESSION_KEY_REGISTRY_ADDRESS"
-unset LIBRARIES
-
-# Step 8: Deploy or use existing FilecoinWarmStorageService proxy
-# Initialize with max proving period, challenge window size, FilBeam controller address, name, and description
-INIT_DATA=$(cast calldata "initialize(uint64,uint256,address,string,string)" $MAX_PROVING_PERIOD $CHALLENGE_WINDOW_SIZE $FILBEAM_CONTROLLER_ADDRESS "$SERVICE_NAME" "$SERVICE_DESCRIPTION")
-deploy_proxy_if_needed \
-    "WARM_STORAGE_SERVICE_ADDRESS" \
-    "$FWS_IMPLEMENTATION_ADDRESS" \
-    "$INIT_DATA" \
-    "FilecoinWarmStorageService proxy"
-
-# Step 9: Deploy FilecoinWarmStorageServiceStateView
-echo -e "${BOLD}FilecoinWarmStorageServiceStateView${RESET}"
+# Step 1: Deploy PDPVerifier implementation
 if [ "$DRY_RUN" = "true" ]; then
-    echo "  🔍 Would deploy (skipping in dry-run)"
+    VERIFIER_IMPLEMENTATION_ADDRESS="0x1234567890123456789012345678901234567890"
+else
+    DEPLOY_OUTPUT=$(forge_create lib/pdp/src/PDPVerifier.sol:PDPVerifier --nonce $NONCE)
+    VERIFIER_IMPLEMENTATION_ADDRESS=$(echo "$DEPLOY_OUTPUT" | grep "Deployed to" | awk '{print $3}')
+    TX_HASH=$(echo "$DEPLOY_OUTPUT" | grep -i "Transaction hash" | awk '{print $NF}')
+    
+    if [ -z "$VERIFIER_IMPLEMENTATION_ADDRESS" ]; then
+        echo "Error: Failed to extract PDPVerifier contract address" >&2
+        echo "Deploy output was:" >&2
+        echo "$DEPLOY_OUTPUT" >&2
+        exit 1
+    fi
+    
+    if [ -n "$TX_HASH" ]; then
+        wait_for_tx "$TX_HASH"
+    else
+        sleep 30
+    fi
+fi
+echo "PDPVerifierImplementation: $VERIFIER_IMPLEMENTATION_ADDRESS"
+NONCE=$(expr $NONCE + "1")
+
+# Step 2: Deploy PDPVerifier proxy
+INIT_DATA=$(cast calldata "initialize(uint256)" $CHALLENGE_FINALITY 2>/dev/null)
+if [ "$DRY_RUN" = "true" ]; then
+    PDP_VERIFIER_ADDRESS="0x2345678901234567890123456789012345678901"
+else
+    if [ -n "$PRIVATE_KEY" ]; then
+        DEPLOY_OUTPUT=$(forge create --private-key "$PRIVATE_KEY" --rpc-url "$ETH_RPC_URL" --broadcast --nonce $NONCE lib/pdp/src/ERC1967Proxy.sol:MyERC1967Proxy --constructor-args "$VERIFIER_IMPLEMENTATION_ADDRESS" "$INIT_DATA" 2>&1)
+    else
+        DEPLOY_OUTPUT=$(forge create --password "$PASSWORD" --broadcast --nonce $NONCE lib/pdp/src/ERC1967Proxy.sol:MyERC1967Proxy --constructor-args "$VERIFIER_IMPLEMENTATION_ADDRESS" "$INIT_DATA" 2>&1)
+    fi
+    
+    PDP_VERIFIER_ADDRESS=$(echo "$DEPLOY_OUTPUT" | grep "Deployed to" | awk '{print $3}')
+    TX_HASH=$(echo "$DEPLOY_OUTPUT" | grep -i "Transaction hash" | awk '{print $NF}')
+    
+    if [ -z "$PDP_VERIFIER_ADDRESS" ]; then
+        echo "Error: Failed to extract PDPVerifier proxy address" >&2
+        echo "Deploy output was:" >&2
+        echo "$DEPLOY_OUTPUT" >&2
+        exit 1
+    fi
+    
+    if [ -n "$TX_HASH" ]; then
+        wait_for_tx "$TX_HASH"
+    else
+        sleep 30
+    fi
+fi
+echo "PDPVerifier: $PDP_VERIFIER_ADDRESS"
+NONCE=$(expr $NONCE + "1")
+
+# Step 3: Deploy Payments contract Implementation
+if [ "$DRY_RUN" = "true" ]; then
+    PAYMENTS_CONTRACT_ADDRESS="0x3456789012345678901234567890123456789012"
+else
+    DEPLOY_OUTPUT=$(forge_create lib/fws-payments/src/FilecoinPayV1.sol:FilecoinPayV1 --nonce $NONCE)
+    PAYMENTS_CONTRACT_ADDRESS=$(echo "$DEPLOY_OUTPUT" | grep "Deployed to" | awk '{print $3}')
+    TX_HASH=$(echo "$DEPLOY_OUTPUT" | grep -i "Transaction hash" | awk '{print $NF}')
+    
+    if [ -z "$PAYMENTS_CONTRACT_ADDRESS" ]; then
+        echo "Error: Failed to extract Payments contract address" >&2
+        echo "Deploy output was:" >&2
+        echo "$DEPLOY_OUTPUT" >&2
+        exit 1
+    fi
+    
+    if [ -n "$TX_HASH" ]; then
+        wait_for_tx "$TX_HASH"
+    else
+        sleep 30
+    fi
+fi
+echo "Payments: $PAYMENTS_CONTRACT_ADDRESS"
+NONCE=$(expr $NONCE + "1")
+
+# Step 4: Deploy ServiceProviderRegistry implementation
+if [ "$DRY_RUN" = "true" ]; then
+    echo "🔍 Testing compilation of ServiceProviderRegistry implementation"
+    forge build src/ServiceProviderRegistry.sol > /dev/null 2>&1
+    if [ $? -eq 0 ]; then
+        REGISTRY_IMPLEMENTATION_ADDRESS="0x4567890123456789012345678901234567890123"  # Dummy address for dry-run
+        echo "✅ ServiceProviderRegistry implementation compilation successful"
+    else
+        echo "❌ ServiceProviderRegistry implementation compilation failed"
+        exit 1
+    fi
+else
+    DEPLOY_OUTPUT=$(forge_create src/ServiceProviderRegistry.sol:ServiceProviderRegistry --nonce $NONCE)
+    REGISTRY_IMPLEMENTATION_ADDRESS=$(echo "$DEPLOY_OUTPUT" | grep "Deployed to" | awk '{print $3}')
+    TX_HASH=$(echo "$DEPLOY_OUTPUT" | grep -i "Transaction hash" | awk '{print $NF}')
+    
+    if [ -z "$REGISTRY_IMPLEMENTATION_ADDRESS" ]; then
+        echo "Error: Failed to extract ServiceProviderRegistry implementation address" >&2
+        echo "Deploy output was:" >&2
+        echo "$DEPLOY_OUTPUT" >&2
+        exit 1
+    fi
+    
+    if [ -n "$TX_HASH" ]; then
+        wait_for_tx "$TX_HASH"
+    else
+        sleep 30
+    fi
+    echo "ServiceProviderRegistryImplementation: $REGISTRY_IMPLEMENTATION_ADDRESS"
+fi
+NONCE=$(expr $NONCE + "1")
+
+# Step 5: Deploy ServiceProviderRegistry proxy
+INIT_DATA=$(cast calldata "initialize()" 2>/dev/null)
+if [ "$DRY_RUN" = "true" ]; then
+    echo "🔍 Would deploy ServiceProviderRegistry proxy with:"
+    echo "   - Implementation: $REGISTRY_IMPLEMENTATION_ADDRESS"
+    echo "   - Initialize: empty initialization"
+    SERVICE_PROVIDER_REGISTRY_PROXY_ADDRESS="0x5678901234567890123456789012345678901234"  # Dummy address for dry-run
+    echo "✅ ServiceProviderRegistry proxy deployment planned"
+else
+    if [ -n "$PRIVATE_KEY" ]; then
+        DEPLOY_OUTPUT=$(forge create --private-key "$PRIVATE_KEY" --rpc-url "$ETH_RPC_URL" --broadcast --nonce $NONCE lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol:ERC1967Proxy --constructor-args "$REGISTRY_IMPLEMENTATION_ADDRESS" "$INIT_DATA" 2>&1)
+    else
+        DEPLOY_OUTPUT=$(forge create --password "$PASSWORD" --broadcast --nonce $NONCE lib/pdp/src/ERC1967Proxy.sol:MyERC1967Proxy --constructor-args "$REGISTRY_IMPLEMENTATION_ADDRESS" "$INIT_DATA" 2>&1)
+    fi
+    
+    SERVICE_PROVIDER_REGISTRY_PROXY_ADDRESS=$(echo "$DEPLOY_OUTPUT" | grep "Deployed to" | awk '{print $3}')
+    TX_HASH=$(echo "$DEPLOY_OUTPUT" | grep -i "Transaction hash" | awk '{print $NF}')
+    
+    if [ -z "$SERVICE_PROVIDER_REGISTRY_PROXY_ADDRESS" ]; then
+        echo "Error: Failed to extract ServiceProviderRegistry proxy address" >&2
+        echo "Deploy output was:" >&2
+        echo "$DEPLOY_OUTPUT" >&2
+        exit 1
+    fi
+    
+    if [ -n "$TX_HASH" ]; then
+        wait_for_tx "$TX_HASH"
+    else
+        sleep 30
+    fi
+    echo "ServiceProviderRegistry: $SERVICE_PROVIDER_REGISTRY_PROXY_ADDRESS"
+fi
+NONCE=$(expr $NONCE + "1")
+
+# Step 6: Deploy FilecoinWarmStorageService implementation
+# First, deploy SignatureVerificationLib library dependency
+if [ "$DRY_RUN" = "true" ]; then
+    echo "🔍 Testing compilation of SignatureVerificationLib"
+    forge build src/lib/SignatureVerificationLib.sol > /dev/null 2>&1
+    if [ $? -eq 0 ]; then
+        SIGNATURE_VERIFICATION_LIB_ADDRESS="0xabcdefabcdefabcdefabcdefabcdefabcdefabcd"  # Dummy address for dry-run
+        echo "✅ SignatureVerificationLib compilation successful"
+    else
+        echo "❌ SignatureVerificationLib compilation failed"
+        exit 1
+    fi
+else
+    DEPLOY_OUTPUT=$(forge_create src/lib/SignatureVerificationLib.sol:SignatureVerificationLib --nonce $NONCE)
+    SIGNATURE_VERIFICATION_LIB_ADDRESS=$(echo "$DEPLOY_OUTPUT" | grep "Deployed to" | awk '{print $3}')
+    TX_HASH=$(echo "$DEPLOY_OUTPUT" | grep -i "Transaction hash" | awk '{print $NF}')
+    
+    if [ -z "$SIGNATURE_VERIFICATION_LIB_ADDRESS" ]; then
+        echo "Error: Failed to extract SignatureVerificationLib address" >&2
+        echo "Deploy output was:" >&2
+        echo "$DEPLOY_OUTPUT" >&2
+        exit 1
+    fi
+    
+    if [ -n "$TX_HASH" ]; then
+        wait_for_tx "$TX_HASH"
+    else
+        sleep 30
+    fi
+    echo "SignatureVerificationLib: $SIGNATURE_VERIFICATION_LIB_ADDRESS"
+fi
+NONCE=$(expr $NONCE + "1")
+if [ "$DRY_RUN" = "true" ]; then
+    echo "🔍 Would deploy FilecoinWarmStorageService implementation with:"
+    echo "   - PDP Verifier: $PDP_VERIFIER_ADDRESS"
+    echo "   - Payments Contract: $PAYMENTS_CONTRACT_ADDRESS"
+    echo "   - USDFC Token: $USDFC_TOKEN_ADDRESS"
+    echo "   - FilBeam Beneficiary: $FILBEAM_BENEFICIARY_ADDRESS"
+    echo "   - Service Provider Registry: $SERVICE_PROVIDER_REGISTRY_PROXY_ADDRESS"
+    echo "   - Session Key Registry: $SESSION_KEY_REGISTRY_ADDRESS"
+    FWS_IMPLEMENTATION_ADDRESS="0x6789012345678901234567890123456789012345"  # Dummy address for dry-run
+    echo "✅ FilecoinWarmStorageService implementation deployment planned"
+else
+    if [ -n "$PRIVATE_KEY" ]; then
+        DEPLOY_OUTPUT=$(forge create --private-key "$PRIVATE_KEY" --rpc-url "$ETH_RPC_URL" --broadcast --nonce $NONCE \
+            --libraries "src/lib/SignatureVerificationLib.sol:SignatureVerificationLib:$SIGNATURE_VERIFICATION_LIB_ADDRESS" \
+            src/FilecoinWarmStorageService.sol:FilecoinWarmStorageService \
+            --constructor-args $PDP_VERIFIER_ADDRESS $PAYMENTS_CONTRACT_ADDRESS $USDFC_TOKEN_ADDRESS $FILBEAM_BENEFICIARY_ADDRESS $SERVICE_PROVIDER_REGISTRY_PROXY_ADDRESS $SESSION_KEY_REGISTRY_ADDRESS 2>&1)
+    else
+        DEPLOY_OUTPUT=$(forge create --password "$PASSWORD" --broadcast --nonce $NONCE \
+            --libraries "src/lib/SignatureVerificationLib.sol:SignatureVerificationLib:$SIGNATURE_VERIFICATION_LIB_ADDRESS" \
+            src/FilecoinWarmStorageService.sol:FilecoinWarmStorageService \
+            --constructor-args $PDP_VERIFIER_ADDRESS $PAYMENTS_CONTRACT_ADDRESS $USDFC_TOKEN_ADDRESS $FILBEAM_BENEFICIARY_ADDRESS $SERVICE_PROVIDER_REGISTRY_PROXY_ADDRESS $SESSION_KEY_REGISTRY_ADDRESS 2>&1)
+    fi
+    
+    FWS_IMPLEMENTATION_ADDRESS=$(echo "$DEPLOY_OUTPUT" | grep "Deployed to" | awk '{print $3}')
+    TX_HASH=$(echo "$DEPLOY_OUTPUT" | grep -i "Transaction hash" | awk '{print $NF}')
+    
+    if [ -z "$FWS_IMPLEMENTATION_ADDRESS" ]; then
+        echo "Error: Failed to extract FilecoinWarmStorageService contract address" >&2
+        echo "Deploy output was:" >&2
+        echo "$DEPLOY_OUTPUT" >&2
+        exit 1
+    fi
+    
+    if [ -n "$TX_HASH" ]; then
+        wait_for_tx "$TX_HASH"
+    else
+        sleep 30
+    fi
+    echo "FilecoinWarmStorageServiceImplementation: $FWS_IMPLEMENTATION_ADDRESS"
+fi
+NONCE=$(expr $NONCE + "1")
+
+# Step 7: Deploy FilecoinWarmStorageService proxy
+# Initialize with max proving period, challenge window size, FilBeam controller address, name, and description
+INIT_DATA=$(cast calldata "initialize(uint64,uint256,address,string,string)" $MAX_PROVING_PERIOD $CHALLENGE_WINDOW_SIZE $FILBEAM_CONTROLLER_ADDRESS "$SERVICE_NAME" "$SERVICE_DESCRIPTION" 2>/dev/null)
+if [ "$DRY_RUN" = "true" ]; then
+    echo "🔍 Would deploy FilecoinWarmStorageService proxy with:"
+    echo "   - Implementation: $FWS_IMPLEMENTATION_ADDRESS"
+    echo "   - Max Proving Period: $MAX_PROVING_PERIOD epochs"
+    echo "   - Challenge Window Size: $CHALLENGE_WINDOW_SIZE epochs"
+    echo "   - FilBeam Controller: $FILBEAM_CONTROLLER_ADDRESS"
+    echo "   - Service Name: $SERVICE_NAME"
+    echo "   - Service Description: $SERVICE_DESCRIPTION"
+    WARM_STORAGE_SERVICE_ADDRESS="0x7890123456789012345678901234567890123456"  # Dummy address for dry-run
+    echo "✅ FilecoinWarmStorageService proxy deployment planned"
+else
+    if [ -n "$PRIVATE_KEY" ]; then
+        DEPLOY_OUTPUT=$(forge create --private-key "$PRIVATE_KEY" --rpc-url "$ETH_RPC_URL" --broadcast --nonce $NONCE lib/pdp/src/ERC1967Proxy.sol:MyERC1967Proxy --constructor-args "$FWS_IMPLEMENTATION_ADDRESS" "$INIT_DATA" 2>&1)
+    else
+        DEPLOY_OUTPUT=$(forge create --password "$PASSWORD" --broadcast --nonce $NONCE lib/pdp/src/ERC1967Proxy.sol:MyERC1967Proxy --constructor-args "$FWS_IMPLEMENTATION_ADDRESS" "$INIT_DATA" 2>&1)
+    fi
+    
+    WARM_STORAGE_SERVICE_ADDRESS=$(echo "$DEPLOY_OUTPUT" | grep "Deployed to" | awk '{print $3}')
+    TX_HASH=$(echo "$DEPLOY_OUTPUT" | grep -i "Transaction hash" | awk '{print $NF}')
+    
+    if [ -z "$WARM_STORAGE_SERVICE_ADDRESS" ]; then
+        echo "Error: Failed to extract FilecoinWarmStorageService proxy address" >&2
+        echo "Deploy output was:" >&2
+        echo "$DEPLOY_OUTPUT" >&2
+        exit 1
+    fi
+    
+    if [ -n "$TX_HASH" ]; then
+        wait_for_tx "$TX_HASH"
+    else
+        sleep 30
+    fi
+    echo "FilecoinWarmStorageService: $WARM_STORAGE_SERVICE_ADDRESS"
+fi
+
+# Step 8: Deploy FilecoinWarmStorageServiceStateView
+NONCE=$(expr $NONCE + "1")
+if [ "$DRY_RUN" = "true" ]; then
+    echo "🔍 Would deploy FilecoinWarmStorageServiceStateView (skipping in dry-run)"
     WARM_STORAGE_VIEW_ADDRESS="0x8901234567890123456789012345678901234567"  # Dummy address for dry-run
     echo "  ✅ Deployment planned (dummy: $WARM_STORAGE_VIEW_ADDRESS)"
 else
-    echo "  🔧 Using external deployment script..."
-    source "$SCRIPT_DIR/deploy-warm-storage-view.sh"
-    echo "  ✅ Deployed at: $WARM_STORAGE_VIEW_ADDRESS"
+    if [ -n "$PRIVATE_KEY" ]; then
+        DEPLOY_OUTPUT=$(forge create --private-key "$PRIVATE_KEY" --rpc-url "$ETH_RPC_URL" --broadcast --nonce $NONCE src/FilecoinWarmStorageServiceStateView.sol:FilecoinWarmStorageServiceStateView --constructor-args $WARM_STORAGE_SERVICE_ADDRESS 2>&1)
+    else
+        DEPLOY_OUTPUT=$(forge create --password "$PASSWORD" --broadcast --nonce $NONCE src/FilecoinWarmStorageServiceStateView.sol:FilecoinWarmStorageServiceStateView --constructor-args $WARM_STORAGE_SERVICE_ADDRESS 2>&1)
+    fi
+    
+    WARM_STORAGE_VIEW_ADDRESS=$(echo "$DEPLOY_OUTPUT" | grep "Deployed to" | awk '{print $3}')
+    TX_HASH=$(echo "$DEPLOY_OUTPUT" | grep -i "Transaction hash" | awk '{print $NF}')
+    
+    if [ -z "$WARM_STORAGE_VIEW_ADDRESS" ]; then
+        echo "Error: Failed to extract FilecoinWarmStorageServiceStateView address" >&2
+        echo "Deploy output was:" >&2
+        echo "$DEPLOY_OUTPUT" >&2
+        exit 1
+    fi
+    
+    if [ -n "$TX_HASH" ]; then
+        wait_for_tx "$TX_HASH"
+    else
+        sleep 30
+    fi
+    echo "FilecoinWarmStorageServiceStateView: $WARM_STORAGE_VIEW_ADDRESS"
 fi
-echo
 
 # Step 10: Set the view contract address on the main contract
-echo -e "${BOLD}Setting view contract address${RESET}"
 NONCE=$(expr $NONCE + "1")
-if [ "$DRY_RUN" = "true" ]; then
-    echo "  🔍 Would set view contract address on main contract (skipping in dry-run)"
-else
-    echo "  🔧 Setting view address on FilecoinWarmStorageService..."
-    source "$SCRIPT_DIR/set-warm-storage-view.sh"
-    echo "  ✅ View address set"
-fi
-echo
-
-if [ "$DRY_RUN" = "true" ]; then
-    echo
-    echo "✅ Dry run completed successfully!"
-    echo "🔍 All contract compilations and simulations passed"
-    echo
-    echo "To perform actual deployment, run with: DRY_RUN=false ./tools/deploy-all-warm-storage.sh"
-    echo
-    echo "# DRY-RUN SUMMARY ($NETWORK_NAME)"
-else
-    echo
-    echo "✅ Deployment completed successfully!"
-    echo
-    echo "# DEPLOYMENT SUMMARY ($NETWORK_NAME)"
-fi
-
-echo "PDPVerifier Implementation: $VERIFIER_IMPLEMENTATION_ADDRESS"
-echo "PDPVerifier Proxy: $PDP_VERIFIER_ADDRESS"
-echo "FilecoinPayV1 Contract: $PAYMENTS_CONTRACT_ADDRESS"
-echo "ServiceProviderRegistry Implementation: $REGISTRY_IMPLEMENTATION_ADDRESS"
-echo "ServiceProviderRegistry Proxy: $SERVICE_PROVIDER_REGISTRY_PROXY_ADDRESS"
-echo "FilecoinWarmStorageService Implementation: $FWS_IMPLEMENTATION_ADDRESS"
-echo "FilecoinWarmStorageService Proxy: $WARM_STORAGE_SERVICE_ADDRESS"
-echo "FilecoinWarmStorageServiceStateView: $WARM_STORAGE_VIEW_ADDRESS"
-echo
-echo "Network Configuration ($NETWORK_NAME):"
-echo "Challenge finality: $CHALLENGE_FINALITY epochs"
-echo "Max proving period: $MAX_PROVING_PERIOD epochs"
-echo "Challenge window size: $CHALLENGE_WINDOW_SIZE epochs"
-echo "USDFC token address: $USDFC_TOKEN_ADDRESS"
-echo "FilBeam controller address: $FILBEAM_CONTROLLER_ADDRESS"
-echo "FilBeam beneficiary address: $FILBEAM_BENEFICIARY_ADDRESS"
-echo "Service name: $SERVICE_NAME"
-echo "Service description: $SERVICE_DESCRIPTION"
-
-# Contract verification
-if [ "$DRY_RUN" = "false" ] && [ "${AUTO_VERIFY:-true}" = "true" ]; then
-    echo
-    echo "🔍 Starting automatic contract verification..."
+if [ "$DRY_RUN" != "true" ]; then
+    if [ -n "$PRIVATE_KEY" ]; then
+        TX_OUTPUT=$(cast send --private-key "$PRIVATE_KEY" --rpc-url "$ETH_RPC_URL" --nonce $NONCE $WARM_STORAGE_SERVICE_ADDRESS "setStateView(address)" $WARM_STORAGE_VIEW_ADDRESS 2>&1)
+    else
+        TX_OUTPUT=$(cast send --password "$PASSWORD" --nonce $NONCE $WARM_STORAGE_SERVICE_ADDRESS "setStateView(address)" $WARM_STORAGE_VIEW_ADDRESS 2>&1)
+    fi
     
-    pushd "$(dirname "$0")/.." >/dev/null
-    source tools/verify-contracts.sh
-    
-    verify_contracts_batch \
-        "$VERIFIER_IMPLEMENTATION_ADDRESS,lib/pdp/src/PDPVerifier.sol:PDPVerifier" \
-        "$PDP_VERIFIER_ADDRESS,lib/pdp/src/ERC1967Proxy.sol:MyERC1967Proxy" \
-        "$PAYMENTS_CONTRACT_ADDRESS,lib/fws-payments/src/FilecoinPayV1.sol:FilecoinPayV1" \
-        "$REGISTRY_IMPLEMENTATION_ADDRESS,src/ServiceProviderRegistry.sol:ServiceProviderRegistry" \
-        "$SERVICE_PROVIDER_REGISTRY_PROXY_ADDRESS,lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol:ERC1967Proxy" \
-        "$FWS_IMPLEMENTATION_ADDRESS,src/FilecoinWarmStorageService.sol:FilecoinWarmStorageService" \
-        "$WARM_STORAGE_SERVICE_ADDRESS,lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol:ERC1967Proxy" \
-        "$WARM_STORAGE_VIEW_ADDRESS,src/FilecoinWarmStorageServiceStateView.sol:FilecoinWarmStorageServiceStateView"
-    
-    popd >/dev/null
+    TX_HASH=$(echo "$TX_OUTPUT" | grep -i "transactionHash" | awk '{print $2}' | tr -d '"')
+    if [ -n "$TX_HASH" ]; then
+        wait_for_tx "$TX_HASH"
+    else
+        sleep 30
+    fi
 fi
