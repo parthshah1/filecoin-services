@@ -720,9 +720,9 @@ fi
 NONCE=$(expr $NONCE + "1")
 if [ "$DRY_RUN" != "true" ]; then
     if [ -n "$PRIVATE_KEY" ]; then
-        TX_OUTPUT=$(cast send --private-key "$PRIVATE_KEY" --rpc-url "$ETH_RPC_URL" --nonce $NONCE $WARM_STORAGE_SERVICE_ADDRESS "setStateView(address)" $WARM_STORAGE_VIEW_ADDRESS 2>&1)
+        TX_OUTPUT=$(cast send --private-key "$PRIVATE_KEY" --rpc-url "$ETH_RPC_URL" --nonce $NONCE $WARM_STORAGE_SERVICE_ADDRESS "setViewContract(address)" $WARM_STORAGE_VIEW_ADDRESS 2>&1)
     else
-        TX_OUTPUT=$(cast send --password "$PASSWORD" --nonce $NONCE $WARM_STORAGE_SERVICE_ADDRESS "setStateView(address)" $WARM_STORAGE_VIEW_ADDRESS 2>&1)
+        TX_OUTPUT=$(cast send --password "$PASSWORD" --nonce $NONCE $WARM_STORAGE_SERVICE_ADDRESS "setViewContract(address)" $WARM_STORAGE_VIEW_ADDRESS 2>&1)
     fi
     
     TX_HASH=$(echo "$TX_OUTPUT" | grep -i "transactionHash" | awk '{print $2}' | tr -d '"')
