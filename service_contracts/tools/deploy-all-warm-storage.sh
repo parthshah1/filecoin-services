@@ -3,7 +3,7 @@
 # Auto-detects network based on RPC chain ID and sets appropriate configuration
 #
 # Supported Networks:
-#   - Chain ID 31415926: Filecoin devnet (5s blocktime, fast testing)
+#   - Chain ID 31415926: Filecoin devnet (4s blocktime, fast testing)
 #   - Chain ID 314159:   Filecoin Calibration testnet
 #   - Chain ID 314:      Filecoin mainnet
 #
@@ -60,11 +60,11 @@ case "$CHAIN" in
     # Network-specific addresses for devnet (using calibnet addresses as fallback)
     USDFC_TOKEN_ADDRESS="${USDFC_TOKEN_ADDRESS}"
     # Default challenge and proving configuration for devnet (fast testing values)
-    # Devnet has ~5 second blocktimes, so epochs are much faster than mainnet
-    # Optimized for extensive simulation testing with shorter windows
-    DEFAULT_CHALLENGE_FINALITY="20"          # Reasonable security for testing (higher than calibnet)
-    DEFAULT_MAX_PROVING_PERIOD="1440"        # 1440 epochs ≈ 2 hours at 5s/epoch (matches calibnet's 2h period)
-    DEFAULT_CHALLENGE_WINDOW_SIZE="60"       # 60 epochs ≈ 5 minutes at 5s/epoch (reduced for faster testing)
+    # Devnet (2k) has 4 second blocktimes per Lotus params_2k.go (BlockDelaySecs=4)
+    # Reference: https://github.com/filecoin-project/lotus/blob/master/build/buildconstants/params_2k.go
+    DEFAULT_CHALLENGE_FINALITY="20"          # Matches Lotus SlashablePowerDelay=20 epochs (80 seconds)
+    DEFAULT_MAX_PROVING_PERIOD="1800"        # 1800 epochs × 4s = 7200s = 2 hours
+    DEFAULT_CHALLENGE_WINDOW_SIZE="75"       # 75 epochs × 4s = 300s = 5 minutes
     ;;
   "314159")
     NETWORK_NAME="calibnet"
@@ -87,7 +87,7 @@ case "$CHAIN" in
   *)
     echo "Error: Unsupported network"
     echo "  Supported networks:"
-    echo "    31415926 - Filecoin devnet (5s blocktime)"
+    echo "    31415926 - Filecoin devnet (4s blocktime)"
     echo "    314159   - Filecoin Calibration testnet"
     echo "    314      - Filecoin mainnet"
     :  # Remove debug message for clean output
