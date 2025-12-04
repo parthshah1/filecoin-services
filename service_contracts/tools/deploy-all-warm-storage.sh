@@ -59,12 +59,13 @@ case "$CHAIN" in
     NETWORK_NAME="devnet"
     # Network-specific addresses for devnet (using calibnet addresses as fallback)
     USDFC_TOKEN_ADDRESS="${USDFC_TOKEN_ADDRESS}"
-    # Default challenge and proving configuration for devnet (fast testing values)
+    # Default challenge and proving configuration for devnet (aggressive testing values)
     # Devnet (2k) has 4 second blocktimes per Lotus params_2k.go (BlockDelaySecs=4)
     # Reference: https://github.com/filecoin-project/lotus/blob/master/build/buildconstants/params_2k.go
-    DEFAULT_CHALLENGE_FINALITY="20"          # Matches Lotus SlashablePowerDelay=20 epochs (80 seconds)
-    DEFAULT_MAX_PROVING_PERIOD="1800"        # 1800 epochs × 4s = 7200s = 2 hours
-    DEFAULT_CHALLENGE_WINDOW_SIZE="75"       # 75 epochs × 4s = 300s = 5 minutes
+    # Optimized for rapid simulation testing - prove every ~24 seconds
+    DEFAULT_CHALLENGE_FINALITY="2"           # 2 epochs × 4s = 8 seconds (minimal for fast testing)
+    DEFAULT_MAX_PROVING_PERIOD="6"           # 6 epochs × 4s = 24 seconds (prove every ~24s)
+    DEFAULT_CHALLENGE_WINDOW_SIZE="2"        # 2 epochs × 4s = 8 seconds window to submit proof
     ;;
   "314159")
     NETWORK_NAME="calibnet"
@@ -323,9 +324,10 @@ fi
 export FOUNDRY_PROFILE=default
 
 # Helper function to wait for transaction confirmation (silent)
+# Uses shorter timeout for devnet (4s blocks) vs mainnet (30s blocks)
 wait_for_tx() {
     local tx_hash="$1"
-    local max_wait=120
+    local max_wait=30  # 30s is plenty for devnet with 4s blocks
     local waited=0
     
     if [ -z "$tx_hash" ] || [ "$tx_hash" = "0x" ]; then
@@ -340,7 +342,6 @@ wait_for_tx() {
         fi
         
         if [ -n "$receipt" ]; then
-            sleep 30
             return 0
         fi
         
@@ -423,7 +424,7 @@ else
         if [ -n "$TX_HASH" ]; then
             wait_for_tx "$TX_HASH"
         else
-            sleep 30
+            sleep 5
         fi
         NONCE=$(expr $NONCE + "1")
     fi
@@ -447,7 +448,7 @@ else
     if [ -n "$TX_HASH" ]; then
         wait_for_tx "$TX_HASH"
     else
-        sleep 30
+        sleep 5
     fi
 fi
 echo "PDPVerifierImplementation: $VERIFIER_IMPLEMENTATION_ADDRESS"
@@ -477,7 +478,7 @@ else
     if [ -n "$TX_HASH" ]; then
         wait_for_tx "$TX_HASH"
     else
-        sleep 30
+        sleep 5
     fi
 fi
 echo "PDPVerifier: $PDP_VERIFIER_ADDRESS"
@@ -501,7 +502,7 @@ else
     if [ -n "$TX_HASH" ]; then
         wait_for_tx "$TX_HASH"
     else
-        sleep 30
+        sleep 5
     fi
 fi
 echo "Payments: $PAYMENTS_CONTRACT_ADDRESS"
@@ -533,7 +534,7 @@ else
     if [ -n "$TX_HASH" ]; then
         wait_for_tx "$TX_HASH"
     else
-        sleep 30
+        sleep 5
     fi
     echo "ServiceProviderRegistryImplementation: $REGISTRY_IMPLEMENTATION_ADDRESS"
 fi
@@ -567,7 +568,7 @@ else
     if [ -n "$TX_HASH" ]; then
         wait_for_tx "$TX_HASH"
     else
-        sleep 30
+        sleep 5
     fi
     echo "ServiceProviderRegistry: $SERVICE_PROVIDER_REGISTRY_PROXY_ADDRESS"
 fi
@@ -600,7 +601,7 @@ else
     if [ -n "$TX_HASH" ]; then
         wait_for_tx "$TX_HASH"
     else
-        sleep 30
+        sleep 5
     fi
     echo "SignatureVerificationLib: $SIGNATURE_VERIFICATION_LIB_ADDRESS"
 fi
@@ -641,7 +642,7 @@ else
     if [ -n "$TX_HASH" ]; then
         wait_for_tx "$TX_HASH"
     else
-        sleep 30
+        sleep 5
     fi
     echo "FilecoinWarmStorageServiceImplementation: $FWS_IMPLEMENTATION_ADDRESS"
 fi
@@ -680,7 +681,7 @@ else
     if [ -n "$TX_HASH" ]; then
         wait_for_tx "$TX_HASH"
     else
-        sleep 30
+        sleep 5
     fi
     echo "FilecoinWarmStorageService: $WARM_STORAGE_SERVICE_ADDRESS"
 fi
@@ -711,7 +712,7 @@ else
     if [ -n "$TX_HASH" ]; then
         wait_for_tx "$TX_HASH"
     else
-        sleep 30
+        sleep 5
     fi
     echo "FilecoinWarmStorageServiceStateView: $WARM_STORAGE_VIEW_ADDRESS"
 fi
@@ -729,6 +730,6 @@ if [ "$DRY_RUN" != "true" ]; then
     if [ -n "$TX_HASH" ]; then
         wait_for_tx "$TX_HASH"
     else
-        sleep 30
+        sleep 5
     fi
 fi
