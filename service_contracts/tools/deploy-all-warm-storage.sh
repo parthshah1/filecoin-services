@@ -395,12 +395,20 @@ else
     # Get deployer address based on authentication method
     if [ -n "$PRIVATE_KEY" ]; then
         ADDR=$(cast wallet address --private-key "$PRIVATE_KEY" 2>/dev/null)
-        NONCE="$(cast nonce "$ADDR" --rpc-url "$ETH_RPC_URL" 2>/dev/null)"
+        # Verify nonce fetches successfully without suppressing errors
+        NONCE="$(cast nonce "$ADDR" --rpc-url "$ETH_RPC_URL")"
     else
         ADDR=$(cast wallet address --password "$PASSWORD" 2>/dev/null)
-        NONCE="$(cast nonce "$ADDR" 2>/dev/null)"
+        NONCE="$(cast nonce "$ADDR")"
     fi
     
+    # Check if NONCE is empty and exit if so
+    if [ -z "$NONCE" ]; then
+        echo "Error: Failed to obtain nonce for address $ADDR"
+        echo "Please check your RPC connection and authentication."
+        exit 1
+    fi
+
     BROADCAST_FLAG="--broadcast"
     
     if [ -z "$SESSION_KEY_REGISTRY_ADDRESS" ]; then
