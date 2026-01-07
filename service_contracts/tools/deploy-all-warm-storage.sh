@@ -392,12 +392,68 @@ if [ "$DRY_RUN" = "true" ]; then
     echo "🧪 Will simulate all deployments without broadcasting transactions"
 else
     # Get deployer address based on authentication method
+    echo "🔍 DEBUG: Starting address and nonce initialization..."
+    echo "🔍 DEBUG: ETH_RPC_URL = $ETH_RPC_URL"
+    
     if [ -n "$PRIVATE_KEY" ]; then
-        ADDR=$(cast wallet address --private-key "$PRIVATE_KEY" 2>/dev/null)
-        NONCE="$(cast nonce "$ADDR" --rpc-url "$ETH_RPC_URL" 2>/dev/null)"
+        echo "🔍 DEBUG: Using PRIVATE_KEY authentication"
+        echo "🔍 DEBUG: PRIVATE_KEY length = ${#PRIVATE_KEY}"
+        echo "🔍 DEBUG: PRIVATE_KEY prefix = ${PRIVATE_KEY:0:6}..."
+        
+        ADDR=$(cast wallet address --private-key "$PRIVATE_KEY" 2>&1)
+        ADDR_EXIT_CODE=$?
+        echo "🔍 DEBUG: cast wallet address exit code = $ADDR_EXIT_CODE"
+        echo "🔍 DEBUG: ADDR = '$ADDR'"
+        
+        if [ $ADDR_EXIT_CODE -ne 0 ] || [ -z "$ADDR" ]; then
+            echo "❌ ERROR: Failed to derive address from PRIVATE_KEY"
+            echo "   Output was: $ADDR"
+            exit 1
+        fi
+        
+        NONCE_OUTPUT=$(cast nonce "$ADDR" --rpc-url "$ETH_RPC_URL" 2>&1)
+        NONCE_EXIT_CODE=$?
+        echo "🔍 DEBUG: cast nonce exit code = $NONCE_EXIT_CODE"
+        echo "🔍 DEBUG: NONCE output = '$NONCE_OUTPUT'"
+        
+        if [ $NONCE_EXIT_CODE -ne 0 ]; then
+            echo "❌ ERROR: Failed to get nonce for address $ADDR"
+            echo "   Output was: $NONCE_OUTPUT"
+            exit 1
+        fi
+        NONCE="$NONCE_OUTPUT"
     else
-        ADDR=$(cast wallet address --password "$PASSWORD" 2>/dev/null)
-        NONCE="$(cast nonce "$ADDR" 2>/dev/null)"
+        echo "🔍 DEBUG: Using keystore authentication"
+        ADDR=$(cast wallet address --password "$PASSWORD" 2>&1)
+        ADDR_EXIT_CODE=$?
+        echo "🔍 DEBUG: cast wallet address exit code = $ADDR_EXIT_CODE"
+        echo "🔍 DEBUG: ADDR = '$ADDR'"
+        
+        if [ $ADDR_EXIT_CODE -ne 0 ] || [ -z "$ADDR" ]; then
+            echo "❌ ERROR: Failed to derive address from keystore"
+            echo "   Output was: $ADDR"
+            exit 1
+        fi
+        
+        NONCE_OUTPUT=$(cast nonce "$ADDR" 2>&1)
+        NONCE_EXIT_CODE=$?
+        echo "🔍 DEBUG: cast nonce exit code = $NONCE_EXIT_CODE"
+        echo "🔍 DEBUG: NONCE output = '$NONCE_OUTPUT'"
+        
+        if [ $NONCE_EXIT_CODE -ne 0 ]; then
+            echo "❌ ERROR: Failed to get nonce for address $ADDR"
+            echo "   Output was: $NONCE_OUTPUT"
+            exit 1
+        fi
+        NONCE="$NONCE_OUTPUT"
+    fi
+    
+    echo "🔍 DEBUG: Final ADDR = '$ADDR'"
+    echo "🔍 DEBUG: Final NONCE = '$NONCE'"
+    
+    if [ -z "$NONCE" ]; then
+        echo "❌ ERROR: NONCE is empty after initialization!"
+        exit 1
     fi
     
     BROADCAST_FLAG="--broadcast"
