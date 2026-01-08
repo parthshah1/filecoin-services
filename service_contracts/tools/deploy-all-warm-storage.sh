@@ -772,13 +772,22 @@ else
     echo "FilecoinWarmStorageServiceStateView: $WARM_STORAGE_VIEW_ADDRESS"
 fi
 
-# Step 10: Set the view contract address on the main contract
+# Step 9: Set the view contract address on the main contract (FIXED: setViewContract instead of setStateView)
 NONCE=$(expr $NONCE + "1")
 if [ "$DRY_RUN" != "true" ]; then
+    echo "Setting view contract address on FilecoinWarmStorageService..."
     if [ -n "$PRIVATE_KEY" ]; then
-        TX_OUTPUT=$(cast send --private-key "$PRIVATE_KEY" --rpc-url "$ETH_RPC_URL" --nonce $NONCE $WARM_STORAGE_SERVICE_ADDRESS "setStateView(address)" $WARM_STORAGE_VIEW_ADDRESS 2>&1)
+        TX_OUTPUT=$(cast send --private-key "$PRIVATE_KEY" --rpc-url "$ETH_RPC_URL" --nonce $NONCE $WARM_STORAGE_SERVICE_ADDRESS "setViewContract(address)" $WARM_STORAGE_VIEW_ADDRESS 2>&1)
     else
-        TX_OUTPUT=$(cast send --password "$PASSWORD" --nonce $NONCE $WARM_STORAGE_SERVICE_ADDRESS "setStateView(address)" $WARM_STORAGE_VIEW_ADDRESS 2>&1)
+        TX_OUTPUT=$(cast send --password "$PASSWORD" --nonce $NONCE $WARM_STORAGE_SERVICE_ADDRESS "setViewContract(address)" $WARM_STORAGE_VIEW_ADDRESS 2>&1)
+    fi
+    
+    # Check if transaction was successful
+    if echo "$TX_OUTPUT" | grep -q "status.*1\|success"; then
+        echo "✅ View contract address set successfully"
+    else
+        echo "⚠️ View contract set transaction output:"
+        echo "$TX_OUTPUT"
     fi
     
     TX_HASH=$(echo "$TX_OUTPUT" | grep -i "transactionHash" | awk '{print $2}' | tr -d '"')
@@ -788,3 +797,21 @@ if [ "$DRY_RUN" != "true" ]; then
         sleep 30
     fi
 fi
+
+echo ""
+echo "=========================================="
+echo "✅ Deployment completed successfully!"
+echo "=========================================="
+echo ""
+echo "Contract Addresses:"
+echo "  SessionKeyRegistry:                    $SESSION_KEY_REGISTRY_ADDRESS"
+echo "  PDPVerifier Implementation:            $VERIFIER_IMPLEMENTATION_ADDRESS"
+echo "  PDPVerifier Proxy:                     $PDP_VERIFIER_ADDRESS"
+echo "  Payments:                              $PAYMENTS_CONTRACT_ADDRESS"
+echo "  ServiceProviderRegistry Implementation: $REGISTRY_IMPLEMENTATION_ADDRESS"
+echo "  ServiceProviderRegistry Proxy:         $SERVICE_PROVIDER_REGISTRY_PROXY_ADDRESS"
+echo "  SignatureVerificationLib:              $SIGNATURE_VERIFICATION_LIB_ADDRESS"
+echo "  FilecoinWarmStorageService Impl:       $FWS_IMPLEMENTATION_ADDRESS"
+echo "  FilecoinWarmStorageService Proxy:      $WARM_STORAGE_SERVICE_ADDRESS"
+echo "  FilecoinWarmStorageServiceStateView:   $WARM_STORAGE_VIEW_ADDRESS"
+echo ""
