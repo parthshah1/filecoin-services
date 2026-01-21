@@ -379,13 +379,19 @@ echo
 # Step 0: Deploy or use existing SessionKeyRegistry
 deploy_session_key_registry_if_needed
 
-# Step 1: Deploy or use existing PDPVerifier implementation
+# Step 1: Deploy or use existing ProviderIdSet (EndorsementSet)
+deploy_implementation_if_needed \
+    "ENDORSEMENT_SET_ADDRESS" \
+    "src/ProviderIdSet.sol:ProviderIdSet" \
+    "ProviderIdSet (EndorsementSet)"
+
+# Step 2: Deploy or use existing PDPVerifier implementation
 deploy_implementation_if_needed \
     "PDP_VERIFIER_IMPLEMENTATION_ADDRESS" \
     "lib/pdp/src/PDPVerifier.sol:PDPVerifier" \
     "PDPVerifier implementation"
 
-# Step 2: Deploy or use existing PDPVerifier proxy
+# Step 3: Deploy or use existing PDPVerifier proxy
 INIT_DATA=$(cast calldata "initialize(uint256)" $CHALLENGE_FINALITY)
 deploy_proxy_if_needed \
     "PDP_VERIFIER_PROXY_ADDRESS" \
@@ -393,19 +399,19 @@ deploy_proxy_if_needed \
     "$INIT_DATA" \
     "PDPVerifier proxy"
 
-# Step 3: Deploy or use existing FilecoinPayV1 contract
+# Step 4: Deploy or use existing FilecoinPayV1 contract
 deploy_implementation_if_needed \
     "FILECOIN_PAY_ADDRESS" \
     "lib/fws-payments/src/FilecoinPayV1.sol:FilecoinPayV1" \
     "FilecoinPayV1"
 
-# Step 4: Deploy or use existing ServiceProviderRegistry implementation
+# Step 5: Deploy or use existing ServiceProviderRegistry implementation
 deploy_implementation_if_needed \
     "SERVICE_PROVIDER_REGISTRY_IMPLEMENTATION_ADDRESS" \
     "src/ServiceProviderRegistry.sol:ServiceProviderRegistry" \
     "ServiceProviderRegistry implementation"
 
-# Step 5: Deploy or use existing ServiceProviderRegistry proxy
+# Step 6: Deploy or use existing ServiceProviderRegistry proxy
 REGISTRY_INIT_DATA=$(cast calldata "initialize()")
 deploy_proxy_if_needed \
     "SERVICE_PROVIDER_REGISTRY_PROXY_ADDRESS" \
@@ -413,13 +419,13 @@ deploy_proxy_if_needed \
     "$REGISTRY_INIT_DATA" \
     "ServiceProviderRegistry proxy"
 
-# Step 6: Deploy or use existing SignatureVerificationLib
+# Step 7: Deploy or use existing SignatureVerificationLib
 deploy_implementation_if_needed \
     "SIGNATURE_VERIFICATION_LIB_ADDRESS" \
     "src/lib/SignatureVerificationLib.sol:SignatureVerificationLib" \
     "SignatureVerificationLib"
 
-# Step 7: Deploy or use existing FilecoinWarmStorageService implementation
+# Step 8: Deploy or use existing FilecoinWarmStorageService implementation
 # Set LIBRARIES variable for the deployment helper (format: path:name:address)
 LIBRARIES="src/lib/SignatureVerificationLib.sol:SignatureVerificationLib:$SIGNATURE_VERIFICATION_LIB_ADDRESS"
 deploy_implementation_if_needed \
@@ -434,7 +440,7 @@ deploy_implementation_if_needed \
     "$SESSION_KEY_REGISTRY_ADDRESS"
 unset LIBRARIES
 
-# Step 8: Deploy or use existing FilecoinWarmStorageService proxy
+# Step 9: Deploy or use existing FilecoinWarmStorageService proxy
 # Initialize with max proving period, challenge window size, FilBeam controller address, name, and description
 INIT_DATA=$(cast calldata "initialize(uint64,uint256,address,string,string)" $MAX_PROVING_PERIOD $CHALLENGE_WINDOW_SIZE $FILBEAM_CONTROLLER_ADDRESS "$SERVICE_NAME" "$SERVICE_DESCRIPTION")
 deploy_proxy_if_needed \
@@ -443,7 +449,7 @@ deploy_proxy_if_needed \
     "$INIT_DATA" \
     "FilecoinWarmStorageService proxy"
 
-# Step 9: Deploy FilecoinWarmStorageServiceStateView
+# Step 10: Deploy FilecoinWarmStorageServiceStateView
 echo -e "${BOLD}FilecoinWarmStorageServiceStateView${RESET}"
 if [ "$DRY_RUN" = "true" ]; then
     echo "  🔍 Would deploy (skipping in dry-run)"
@@ -461,7 +467,7 @@ else
 fi
 echo
 
-# Step 10: Set the view contract address on the main contract
+# Step 11: Set the view contract address on the main contract
 echo -e "${BOLD}Setting view contract address${RESET}"
 NONCE=$(expr $NONCE + "1")
 if [ "$DRY_RUN" = "true" ]; then
@@ -496,6 +502,7 @@ echo "ServiceProviderRegistry Proxy: $SERVICE_PROVIDER_REGISTRY_PROXY_ADDRESS"
 echo "FilecoinWarmStorageService Implementation: $FWSS_IMPLEMENTATION_ADDRESS"
 echo "FilecoinWarmStorageService Proxy: $FWSS_PROXY_ADDRESS"
 echo "FilecoinWarmStorageServiceStateView: $FWSS_VIEW_ADDRESS"
+echo "ProviderIdSet (EndorsementSet): $ENDORSEMENT_SET_ADDRESS"
 echo
 echo "Network Configuration ($NETWORK_NAME):"
 echo "Challenge finality: $CHALLENGE_FINALITY epochs"
@@ -523,7 +530,8 @@ if [ "$DRY_RUN" = "false" ] && [ "${AUTO_VERIFY:-true}" = "true" ]; then
         "$SERVICE_PROVIDER_REGISTRY_PROXY_ADDRESS,lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol:ERC1967Proxy" \
         "$FWSS_IMPLEMENTATION_ADDRESS,src/FilecoinWarmStorageService.sol:FilecoinWarmStorageService" \
         "$FWSS_PROXY_ADDRESS,lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol:ERC1967Proxy" \
-        "$FWSS_VIEW_ADDRESS,src/FilecoinWarmStorageServiceStateView.sol:FilecoinWarmStorageServiceStateView"
+        "$FWSS_VIEW_ADDRESS,src/FilecoinWarmStorageServiceStateView.sol:FilecoinWarmStorageServiceStateView" \
+        "$ENDORSEMENT_SET_ADDRESS,src/ProviderIdSet.sol:ProviderIdSet"
     
     popd >/dev/null
 fi
